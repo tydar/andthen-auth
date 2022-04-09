@@ -8,7 +8,7 @@ type Users interface {
 	All(ctx context.Context) ([]User, error)
 	GetById(ctx context.Context, id int) (User, error)
 	Delete(ctx context.Context, id int) error
-	SearchByUsername(ctx context.Context, username string) ([]User, error)
+	GetByUsername(ctx context.Context, username string) (User, error)
 	CheckPassword(ctx context.Context, username, password string) (bool, error)
 }
 
