@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/jackc/pgx"
+	"github.com/jackc/pgx/v4"
 	"github.com/jackc/pgx/v4/pgxpool"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -60,18 +60,59 @@ func (ur UserRepo) GetByUsername(ctx context.Context, username string) (User, er
 	return scanToUser(u)
 }
 
-func (ur UserRepo) CheckPassword(ctx context.Context, username, password string) (bool, error) {
+func (ur UserRepo) GetById(ctx context.Context, id int) (User, error) {
+	u := ur.pool.QueryRow(ctx, "SELECT * FROM users WHERE id = $1", id)
+
+	return scanToUser(u)
+}
+
+func (ur UserRepo) Delete(ctx context.Context, id int) error {
+	_, err := ur.pool.Exec(ctx, "DELETE FROM users WHERE id = $1", id)
+	if err != nil {
+		return fmt.Errorf("pool.Exec: %v", err)
+	}
+
+	return nil
+}
+
+func (ur UserRepo) CheckPassword(ctx context.Context, username, password string) (bool, User, error) {
 	u, err := ur.GetByUsername(ctx, username)
 	if err != nil {
-		return false, fmt.Errorf("GetByUsername: %v", err)
+		return false, User{}, fmt.Errorf("GetByUsername: %v", err)
 	}
 
 	expectedPass := u.Password
 	if err := bcrypt.CompareHashAndPassword([]byte(expectedPass), []byte(password)); err != nil {
-		return false, nil
+		return false, User{}, nil
 	}
 
-	return true, nil
+	return true, u, nil
+}
+
+func (ur UserRepo) ChangePassword(ctx context.Context, username, password string) error {
+	bcryptCost := 10
+
+	u, err := ur.GetByUsername(ctx, username)
+	if err != nil {
+		return fmt.Errorf("GetByUsername: %v", err)
+	}
+
+	hashedPass, err := bcrypt.GenerateFromPassword([]byte(password), bcryptCost)
+	if err != nil {
+		return fmt.Errorf("bcrypt.GenerateFromPassword: %v", err)
+	}
+
+	_, err = ur.pool.Exec(ctx,
+		"UPDATE users SET password = $1 WHERE id = $2",
+		hashedPass,
+		u.ID,
+	)
+
+	if err != nil {
+		return fmt.Errorf("pool.Exec: %v", err)
+	}
+
+	return nil
 }
 
 // utility functions
