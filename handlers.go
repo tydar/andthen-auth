@@ -7,7 +7,10 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 )
+
+//handlers and request/response types
 
 type LoginRequest struct {
 	Username string
@@ -53,28 +56,140 @@ func (e Env) Login(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		w.Header().Set("Authorization", "Bearer "+tok.String())
+
+		ref, err := refreshFromUser(user, e.secret)
+		if err != nil {
+			writeJsendError(w, fmt.Sprintf("error generating refresh token: %v", err), http.StatusInternalServerError, noData)
+			return
+		}
+
+		refCookie := &http.Cookie{
+			Name:     "andthen_refresh",
+			Value:    ref.String(),
+			Expires:  time.Now().Add(4 * time.Hour),
+			HttpOnly: true,
+		}
+
+		http.SetCookie(w, refCookie)
+
 		writeJsendSuccess(w, map[string]interface{}{"id": user.ID, "username": user.Username})
 		return
 	}
 	writeJsendFailure(w, map[string]interface{}{"validation": "incorrect username or password"})
 }
 
-// utility
-
-// jwt responses
-func jwtResponse(w http.ResponseWriter, user User, secret string) {
-	tok, err := jwtFromUser(user, secret)
-	if err != nil {
-		http.Error(w, fmt.Sprintf("jwtFromUser: %v", err), http.StatusInternalServerError)
+func (e Env) Refresh(w http.ResponseWriter, r *http.Request) {
+	noData := map[string]interface{}{}
+	if r.Method != "GET" {
+		writeJsendError(w, "method not allowed: "+r.Method, http.StatusMethodNotAllowed, noData)
+		return
 	}
 
-	io.WriteString(w, tok.String())
+	refCookie, err := r.Cookie("andthen_refresh")
+	if err != nil {
+		writeJsendError(w, "missing/bad andthen_refresh cookie", http.StatusBadRequest, noData)
+		return
+	}
+
+	tok, err := parseToken(refCookie.Value, []byte(e.secret))
+	if err != nil {
+		writeJsendError(w,
+			"error parsing JWT token for refresh",
+			http.StatusInternalServerError,
+			map[string]interface{}{"internalError": err.Error()},
+		)
+		return
+	}
+
+	exp, prs := tok.Payload["exp"]
+	if !tok.Valid || !prs {
+		writeJsendError(w, "JWT token invalid", http.StatusBadRequest, noData)
+		return
+	}
+
+	expStr, ok := exp.(float64)
+	if !ok {
+		writeJsendError(w, fmt.Sprintf("JWT expiration time invalid: %v", exp), http.StatusBadRequest, noData)
+		return
+	}
+
+	/*
+		expFloat, err := strconv.ParseFloat(expStr, 64)
+		if err != nil {
+			writeJsendError(w, "JWT expiration time parse failure", http.StatusBadRequest, noData)
+		}
+	*/
+
+	expTime := time.Unix(int64(expStr), 0)
+	if expTime.Before(time.Now()) {
+		writeJsendFailure(w, map[string]interface{}{"msg": "refresh token expired"})
+		return
+	}
+
+	// since we know the refresh token is good, issue a new access token & refresh token
+	uid, ok := tok.Payload["id"].(float64)
+	if !ok {
+		writeJsendError(w, fmt.Sprintf("bad uid in token: %T", tok.Payload["id"]), http.StatusBadRequest, noData)
+		return
+	}
+
+	user, err := e.users.GetById(r.Context(), int(uid))
+	if err != nil {
+		writeJsendError(w, "user lookup failed: "+err.Error(), http.StatusInternalServerError, noData)
+	}
+
+	newAccess, err := jwtFromUser(user, e.secret)
+	if err != nil {
+		writeJsendError(w, "token generation failed", http.StatusInternalServerError, noData)
+		return
+	}
+
+	newRefresh, err := refreshFromUser(user, e.secret)
+	if err != nil {
+		writeJsendError(w, "refresh token generation failed", http.StatusInternalServerError, noData)
+		return
+	}
+
+	w.Header().Set("Authorization", "Bearer "+newAccess.String())
+	newRefCookie := http.Cookie{
+		Name:     "andthen_refresh",
+		Value:    newRefresh.String(),
+		HttpOnly: true,
+		Expires:  time.Now().Add(4 * time.Hour),
+	}
+
+	http.SetCookie(w, &newRefCookie)
+	writeJsendSuccess(w, map[string]interface{}{"id": user.ID, "username": user.Username})
 }
+
+// utility
+
+// jwt functions
+//TODO: make time to expire configurable
 
 func jwtFromUser(user User, secret string) (JWT, error) {
 	jwtPayload := make(map[string]interface{})
 	jwtPayload["id"] = user.ID
 	jwtPayload["username"] = user.Username
+	jwtPayload["iat"] = time.Now().Unix()
+	jwtPayload["exp"] = time.Now().Add(15 * time.Minute).Unix()
+	jwtPayload["use"] = "auth"
+
+	tok, err := newToken(jwtPayload, []byte(secret))
+	if err != nil {
+		return JWT{}, fmt.Errorf("newToken: %v", err)
+	}
+
+	return tok, nil
+}
+
+func refreshFromUser(user User, secret string) (JWT, error) {
+	jwtPayload := make(map[string]interface{})
+	jwtPayload["id"] = user.ID
+	jwtPayload["username"] = user.Username
+	jwtPayload["iat"] = time.Now().Unix()
+	jwtPayload["exp"] = time.Now().Add(4 * time.Hour).Unix()
+	jwtPayload["use"] = "refresh"
 
 	tok, err := newToken(jwtPayload, []byte(secret))
 	if err != nil {
@@ -86,10 +201,10 @@ func jwtFromUser(user User, secret string) (JWT, error) {
 
 // jsend helpers
 type JsendError struct {
-	Status  string
-	Message string
-	Code    int
-	Data    map[string]interface{}
+	Status  string                 `json:"status"`
+	Message string                 `json:"message"`
+	Code    int                    `json:"code"`
+	Data    map[string]interface{} `json:"data"`
 }
 
 func (j JsendError) String() string {
@@ -124,8 +239,8 @@ func writeJsendError(w http.ResponseWriter, message string, code int, data map[s
 }
 
 type JsendSuccess struct {
-	Status string
-	Data   map[string]interface{}
+	Status string                 `json:"status"`
+	Data   map[string]interface{} `json:"data"`
 }
 
 func (j JsendSuccess) String() string {
@@ -166,8 +281,8 @@ func writeJsendSuccess(w http.ResponseWriter, data map[string]interface{}) {
 }
 
 type JsendFailure struct {
-	Status string
-	Data   map[string]interface{}
+	Status string                 `json:"status"`
+	Data   map[string]interface{} `json:"data"`
 }
 
 func (j JsendFailure) String() string {

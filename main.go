@@ -34,6 +34,7 @@ func main() {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/login/", env.Login)
+	mux.HandleFunc("/refresh/", env.Refresh)
 
 	if err := http.ListenAndServe(":"+servePort, mux); err != nil {
 		log.Fatalf("ListenAndServe: %v", err)
