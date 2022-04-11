@@ -1,6 +1,10 @@
 package main
 
-import "context"
+import (
+	"context"
+
+	"github.com/jackc/pgx/v4/pgxpool"
+)
 
 type Users interface {
 	Create(ctx context.Context, username, password string) error
@@ -14,4 +18,12 @@ type Users interface {
 type Env struct {
 	users  Users
 	secret string
+}
+
+func NewEnv(pool *pgxpool.Pool, secret string) Env {
+	ur := NewUserRepo(pool)
+	return Env{
+		users:  ur,
+		secret: secret,
+	}
 }
