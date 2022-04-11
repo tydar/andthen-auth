@@ -1,29 +1,41 @@
 package main
 
-import "fmt"
+import (
+	"context"
+	"log"
+	"net/http"
+	"os"
+
+	"github.com/jackc/pgx/v4/pgxpool"
+)
 
 func main() {
-	token := "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c"
-	secret := []byte("your-256-bit-secret")
-
-	jwt, err := parseToken(token, secret)
-	if err != nil {
-		panic(err)
+	dbUrl := os.Getenv("DATABASE_URL")
+	servePort := os.Getenv("PORT")
+	if servePort == "" {
+		servePort = "8080"
 	}
 
-	fmt.Println(jwt)
-
-	payload := jwt.Payload
-	jwt2, err := newToken(payload, secret)
+	cf, err := pgxpool.ParseConfig(dbUrl)
 	if err != nil {
-		panic(err)
+		log.Fatalf("pgxpool.ParseConfig: %v", err)
 	}
 
-	fmt.Println(jwt2)
-	jwt3, err := parseToken(jwt2.Raw, secret)
+	pool, err := pgxpool.ConnectConfig(context.Background(), cf)
 	if err != nil {
-		panic(err)
+		log.Fatalf("pgxpool.ConnectConfig: %v", err)
 	}
 
-	fmt.Printf("%v\n", jwt3.Valid)
+	env := NewEnv(pool, "your-256-bit-secret")
+
+	if err := env.users.Create(context.TODO(), "test", "test2"); err != nil {
+		log.Fatalf("env.users.Create: %v", err)
+	}
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/login/", env.Login)
+
+	if err := http.ListenAndServe(":"+servePort, mux); err != nil {
+		log.Fatalf("ListenAndServe: %v", err)
+	}
 }
