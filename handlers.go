@@ -162,6 +162,52 @@ func (e Env) Refresh(w http.ResponseWriter, r *http.Request) {
 	writeJsendSuccess(w, map[string]interface{}{"id": user.ID, "username": user.Username})
 }
 
+type SignupRequest struct {
+	Username string
+	Password string
+}
+
+func (e Env) Signup(w http.ResponseWriter, r *http.Request) {
+	noData := map[string]interface{}{}
+	if r.Method != "POST" {
+		writeJsendError(w, "method invalid: "+r.Method, http.StatusMethodNotAllowed, noData)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+
+	var parsedBody SignupRequest
+	err := decodeJSONBody(w, r, &parsedBody)
+	if err != nil {
+		var mr *malformedRequest
+		if errors.As(err, &mr) {
+			writeJsendError(w, mr.msg, mr.status, noData)
+		} else {
+			writeJsendError(w, fmt.Sprintf("decodeJSONBody: %v", err), http.StatusInternalServerError, noData)
+		}
+		return
+	}
+
+	if parsedBody.Username == "" || parsedBody.Password == "" {
+		writeJsendError(w, "username and password required", http.StatusBadRequest, noData)
+		return
+	}
+
+	if err := e.users.Create(r.Context(), parsedBody.Username, parsedBody.Password); err != nil {
+		if err.Error() == "user with this username already exists" {
+			writeJsendError(w, err.Error(), http.StatusConflict, noData)
+			return
+		}
+
+		writeJsendError(w, "account creation error: "+err.Error(), http.StatusInternalServerError, noData)
+		return
+	}
+
+	//TODO: hit player creation endpoint after creating user. Delete user if unable to create player.
+
+	writeJsendSuccess(w, map[string]interface{}{"msg": "account created"})
+	return
+}
+
 // utility
 
 // jwt functions

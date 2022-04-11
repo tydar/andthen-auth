@@ -28,13 +28,10 @@ func main() {
 
 	env := NewEnv(pool, "your-256-bit-secret")
 
-	if err := env.users.Create(context.TODO(), "test", "test2"); err != nil {
-		log.Fatalf("env.users.Create: %v", err)
-	}
-
 	mux := http.NewServeMux()
 	mux.HandleFunc("/login/", env.Login)
 	mux.HandleFunc("/refresh/", env.Refresh)
+	mux.HandleFunc("/signup/", env.Signup)
 
 	if err := http.ListenAndServe(":"+servePort, mux); err != nil {
 		log.Fatalf("ListenAndServe: %v", err)
