@@ -2,10 +2,17 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 )
+
+type LoginRequest struct {
+	Username string
+	Password string
+}
 
 func (e Env) Login(w http.ResponseWriter, r *http.Request) {
 	noData := map[string]interface{}{}
@@ -16,15 +23,24 @@ func (e Env) Login(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 
-	username := r.PostFormValue("username")
-	password := r.PostFormValue("password")
+	var parsedBody LoginRequest
+	err := decodeJSONBody(w, r, &parsedBody)
+	if err != nil {
+		var mr *malformedRequest
+		if errors.As(err, &mr) {
+			writeJsendError(w, mr.msg, mr.status, noData)
+		} else {
+			writeJsendError(w, fmt.Sprintf("decodeJSONBody: %v", err), http.StatusInternalServerError, noData)
+		}
+		return
+	}
 
-	if username == "" || password == "" {
+	if parsedBody.Username == "" || parsedBody.Password == "" {
 		writeJsendError(w, "username and password required", http.StatusBadRequest, noData)
 		return
 	}
 
-	good, user, err := e.users.CheckPassword(r.Context(), username, password)
+	good, user, err := e.users.CheckPassword(r.Context(), parsedBody.Username, parsedBody.Password)
 	if err != nil {
 		writeJsendError(w, fmt.Sprintf("Database error: CheckPassword: %v", err), http.StatusInternalServerError, noData)
 		return
@@ -40,12 +56,12 @@ func (e Env) Login(w http.ResponseWriter, r *http.Request) {
 		writeJsendSuccess(w, map[string]interface{}{"id": user.ID, "username": user.Username})
 		return
 	}
-	// fail...
 	writeJsendFailure(w, map[string]interface{}{"validation": "incorrect username or password"})
 }
 
 // utility
 
+// jwt responses
 func jwtResponse(w http.ResponseWriter, user User, secret string) {
 	tok, err := jwtFromUser(user, secret)
 	if err != nil {
@@ -69,7 +85,6 @@ func jwtFromUser(user User, secret string) (JWT, error) {
 }
 
 // jsend helpers
-
 type JsendError struct {
 	Status  string
 	Message string
@@ -177,6 +192,7 @@ func (j JsendFailure) String() string {
 	return string(str)
 }
 
+// ditto the JsendSuccess comment
 func jsendFailure(data map[string]interface{}) string {
 	jsendFail := JsendFailure{
 		Status: "fail",
@@ -188,4 +204,69 @@ func jsendFailure(data map[string]interface{}) string {
 
 func writeJsendFailure(w http.ResponseWriter, data map[string]interface{}) {
 	io.WriteString(w, jsendFailure(data))
+}
+
+// JSON request parsing functions
+// courtesy of https://www.alexedwards.net/blog/how-to-properly-parse-a-json-request-body
+
+type malformedRequest struct {
+	status int
+	msg    string
+}
+
+func (mr *malformedRequest) Error() string {
+	return mr.msg
+}
+
+func decodeJSONBody(w http.ResponseWriter, r *http.Request, dst interface{}) error {
+	contentType := r.Header.Get("Content-Type")
+	if contentType != "application/json" && contentType != "" {
+		msg := "Content-Type header is not application/json"
+		return &malformedRequest{status: http.StatusUnsupportedMediaType, msg: msg}
+	}
+
+	// this will result in a case where a non-JSend error is returned; for now that's ok
+	r.Body = http.MaxBytesReader(w, r.Body, 1048576)
+
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+
+	err := dec.Decode(&dst)
+	if err != nil {
+		var syntaxError *json.SyntaxError
+		var unmarshalTypeError *json.UnmarshalTypeError
+
+		switch {
+		case errors.As(err, &syntaxError):
+			msg := fmt.Sprintf("Request body contains badly-formed JSON (at position %d)", syntaxError.Offset)
+			return &malformedRequest{status: http.StatusBadRequest, msg: msg}
+		case errors.Is(err, io.ErrUnexpectedEOF):
+			msg := "Request body contains badly-formed JSON"
+			return &malformedRequest{status: http.StatusBadRequest, msg: msg}
+		case errors.As(err, &unmarshalTypeError):
+			msg := fmt.Sprintf("Request body contains an invalid value for the %q field(at position %d)", unmarshalTypeError.Field, unmarshalTypeError.Offset)
+			return &malformedRequest{status: http.StatusBadRequest, msg: msg}
+		case strings.HasPrefix(err.Error(), "json: unknown field "):
+			fieldName := strings.TrimPrefix(err.Error(), "json: unknown field ")
+			msg := fmt.Sprintf("Request body contains unknown field %s", fieldName)
+			return &malformedRequest{status: http.StatusBadRequest, msg: msg}
+		case errors.Is(err, io.EOF):
+			msg := "Request body must not be empty"
+			return &malformedRequest{status: http.StatusBadRequest, msg: msg}
+		case err.Error() == "http: request body too large":
+			msg := "Request body must not be larger than 1MB"
+			return &malformedRequest{status: http.StatusRequestEntityTooLarge, msg: msg}
+
+		default:
+			return err
+		}
+	}
+
+	err = dec.Decode(&struct{}{})
+	if err != io.EOF {
+		msg := "Request body must only contain a single JSON object"
+		return &malformedRequest{status: http.StatusBadRequest, msg: msg}
+	}
+
+	return nil
 }
