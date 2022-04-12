@@ -203,6 +203,16 @@ func (e Env) Signup(w http.ResponseWriter, r *http.Request) {
 	}
 
 	//TODO: hit player creation endpoint after creating user. Delete user if unable to create player.
+	user, err := e.users.GetByUsername(r.Context(), parsedBody.Username)
+	if err != nil {
+		writeJsendError(w, "error fetching user data: "+err.Error(), http.StatusInternalServerError, noData)
+		return
+	}
+
+	if err := e.users.NotifyPlayerService(r.Context(), user.Username, user.ID); err != nil {
+		writeJsendError(w, "error notifying player service: "+err.Error(), http.StatusInternalServerError, noData)
+		return
+	}
 
 	writeJsendSuccess(w, map[string]interface{}{"msg": "account created"})
 	return

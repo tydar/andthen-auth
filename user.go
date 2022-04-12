@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 
 	"github.com/jackc/pgx/v4"
@@ -108,6 +109,29 @@ func (ur UserRepo) ChangePassword(ctx context.Context, username, password string
 		u.ID,
 	)
 
+	if err != nil {
+		return fmt.Errorf("pool.Exec: %v", err)
+	}
+
+	return nil
+}
+
+type NotificationPayload struct {
+	DisplayName string `json:"display_name"`
+	UserId      int    `json:"user_id"`
+}
+
+func (ur UserRepo) NotifyPlayerService(ctx context.Context, display string, id int) error {
+	payload := NotificationPayload{DisplayName: display, UserId: id}
+	payloadStr, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("json.Marshal: %v", err)
+	}
+
+	_, err = ur.pool.Exec(ctx,
+		"SELECT pg_notify('user_player', $1)",
+		payloadStr,
+	)
 	if err != nil {
 		return fmt.Errorf("pool.Exec: %v", err)
 	}
