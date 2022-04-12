@@ -165,7 +165,6 @@ func (e Env) Refresh(w http.ResponseWriter, r *http.Request) {
 type SignupRequest struct {
 	Username string
 	Password string
-	Admin    bool
 }
 
 func (e Env) Signup(w http.ResponseWriter, r *http.Request) {
@@ -193,7 +192,7 @@ func (e Env) Signup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := e.users.Create(r.Context(), parsedBody.Username, parsedBody.Password, parsedBody.Admin); err != nil {
+	if err := e.users.Create(r.Context(), parsedBody.Username, parsedBody.Password, false); err != nil {
 		if err.Error() == "user with this username already exists" {
 			writeJsendError(w, err.Error(), http.StatusConflict, noData)
 			return
