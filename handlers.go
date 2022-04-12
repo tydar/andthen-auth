@@ -165,6 +165,7 @@ func (e Env) Refresh(w http.ResponseWriter, r *http.Request) {
 type SignupRequest struct {
 	Username string
 	Password string
+	Admin    bool
 }
 
 func (e Env) Signup(w http.ResponseWriter, r *http.Request) {
@@ -192,7 +193,7 @@ func (e Env) Signup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := e.users.Create(r.Context(), parsedBody.Username, parsedBody.Password); err != nil {
+	if err := e.users.Create(r.Context(), parsedBody.Username, parsedBody.Password, parsedBody.Admin); err != nil {
 		if err.Error() == "user with this username already exists" {
 			writeJsendError(w, err.Error(), http.StatusConflict, noData)
 			return
@@ -227,6 +228,7 @@ func jwtFromUser(user User, secret string) (JWT, error) {
 	jwtPayload := make(map[string]interface{})
 	jwtPayload["id"] = user.ID
 	jwtPayload["username"] = user.Username
+	jwtPayload["admin"] = user.Admin
 	jwtPayload["iat"] = time.Now().Unix()
 	jwtPayload["exp"] = time.Now().Add(15 * time.Minute).Unix()
 	jwtPayload["use"] = "auth"
@@ -266,7 +268,7 @@ type JsendError struct {
 func (j JsendError) String() string {
 	str, err := json.Marshal(j)
 	if err != nil {
-		return "{\"status\":\"error\",\"message\":\"Error generating error\"}"
+		return "{\"status\":\"error\",\"message\":\"Error generating error\", \"code\":500}"
 	}
 
 	return string(str)
@@ -286,12 +288,12 @@ func jsendError(message string, code int, data map[string]interface{}) string {
 		jsendErr.Data = data
 	}
 
-	return fmt.Sprint(jsendErr)
+	return jsendErr.String()
 }
 
 func writeJsendError(w http.ResponseWriter, message string, code int, data map[string]interface{}) {
 	errMsg := jsendError(message, code, data)
-	http.Error(w, errMsg, code)
+	io.WriteString(w, errMsg)
 }
 
 type JsendSuccess struct {

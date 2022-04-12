@@ -26,10 +26,11 @@ type User struct {
 	ID       int
 	Username string
 	Password string
+	Admin    bool
 }
 
 // Create stores a new user in the database
-func (ur UserRepo) Create(ctx context.Context, username, password string) error {
+func (ur UserRepo) Create(ctx context.Context, username, password string, admin bool) error {
 	bcryptCost := 10
 
 	_, err := ur.GetByUsername(ctx, username)
@@ -43,9 +44,10 @@ func (ur UserRepo) Create(ctx context.Context, username, password string) error 
 	}
 
 	_, err = ur.pool.Exec(ctx,
-		"INSERT INTO users (username, password) values ($1, $2)",
+		"INSERT INTO users (username, password, admin) values ($1, $2, $3)",
 		username,
 		hashedPass,
+		admin,
 	)
 
 	if err != nil {
@@ -143,8 +145,9 @@ func (ur UserRepo) NotifyPlayerService(ctx context.Context, display string, id i
 func scanToUser(r pgx.Row) (User, error) {
 	var id int
 	var username, password string
+	var admin bool
 
-	if err := r.Scan(&id, &username, &password); err != nil {
+	if err := r.Scan(&id, &username, &password, &admin); err != nil {
 		return User{}, fmt.Errorf("pgx.Row.Scan: %v", err)
 	}
 
@@ -152,5 +155,6 @@ func scanToUser(r pgx.Row) (User, error) {
 		ID:       id,
 		Username: username,
 		Password: password,
+		Admin:    admin,
 	}, nil
 }
