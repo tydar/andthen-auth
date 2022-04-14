@@ -55,7 +55,6 @@ func (e Env) Login(w http.ResponseWriter, r *http.Request) {
 			writeJsendError(w, fmt.Sprintf("error generating token: %v", err), http.StatusInternalServerError, noData)
 			return
 		}
-		w.Header().Set("Authorization", "Bearer "+tok.String())
 
 		ref, err := refreshFromUser(user, e.secret)
 		if err != nil {
@@ -63,16 +62,32 @@ func (e Env) Login(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
+		jwtCookie := &http.Cookie{
+			Name:     "anthen_auth",
+			Value:    tok.String(),
+			Expires:  time.Now().Add(15 * time.Minute),
+			HttpOnly: true,
+			SameSite: http.SameSiteStrictMode,
+		}
 		refCookie := &http.Cookie{
 			Name:     "andthen_refresh",
 			Value:    ref.String(),
 			Expires:  time.Now().Add(4 * time.Hour),
 			HttpOnly: true,
+			SameSite: http.SameSiteStrictMode,
+		}
+		userCookie := &http.Cookie{
+			Name:     "andthen_user",
+			Value:    user.ToSafeJSONString(),
+			HttpOnly: false,
+			SameSite: http.SameSiteStrictMode,
 		}
 
+		http.SetCookie(w, jwtCookie)
 		http.SetCookie(w, refCookie)
+		http.SetCookie(w, userCookie)
 
-		writeJsendSuccess(w, map[string]interface{}{"id": user.ID, "username": user.Username})
+		writeJsendSuccess(w, noData)
 		return
 	}
 	writeJsendFailure(w, map[string]interface{}{"validation": "incorrect username or password"})
@@ -136,6 +151,7 @@ func (e Env) Refresh(w http.ResponseWriter, r *http.Request) {
 	user, err := e.users.GetById(r.Context(), int(uid))
 	if err != nil {
 		writeJsendError(w, "user lookup failed: "+err.Error(), http.StatusInternalServerError, noData)
+		return
 	}
 
 	newAccess, err := jwtFromUser(user, e.secret)
@@ -150,15 +166,23 @@ func (e Env) Refresh(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Header().Set("Authorization", "Bearer "+newAccess.String())
-	newRefCookie := http.Cookie{
+	newJwtCookie := &http.Cookie{
+		Name:     "anthen_auth",
+		Value:    newAccess.String(),
+		HttpOnly: true,
+		Expires:  time.Now().Add(15 * time.Minute),
+		SameSite: http.SameSiteStrictMode,
+	}
+	newRefCookie := &http.Cookie{
 		Name:     "andthen_refresh",
 		Value:    newRefresh.String(),
 		HttpOnly: true,
 		Expires:  time.Now().Add(4 * time.Hour),
+		SameSite: http.SameSiteStrictMode,
 	}
 
-	http.SetCookie(w, &newRefCookie)
+	http.SetCookie(w, newRefCookie)
+	http.SetCookie(w, newJwtCookie)
 	writeJsendSuccess(w, map[string]interface{}{"id": user.ID, "username": user.Username})
 }
 
@@ -171,6 +195,7 @@ func (e Env) Signup(w http.ResponseWriter, r *http.Request) {
 	noData := map[string]interface{}{}
 	if r.Method != "POST" {
 		writeJsendError(w, "method invalid: "+r.Method, http.StatusMethodNotAllowed, noData)
+		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -214,7 +239,7 @@ func (e Env) Signup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJsendSuccess(w, map[string]interface{}{"msg": "account created"})
+	writeJsendSuccess(w, map[string]interface{}{"message": "account created"})
 	return
 }
 

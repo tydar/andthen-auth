@@ -29,6 +29,14 @@ type User struct {
 	Admin    bool
 }
 
+func (u User) ToSafeJSONString() string {
+	// since it's a flat known object, just spit out the JSON string representation w/o password hash
+	// to avoid error juggling from encoding/json
+	// may have to change later if user records become more complex
+
+	return fmt.Sprintf("{\"username\":\"%s\",\"id\":%d,\"admin\":%t}", u.Username, u.ID, u.Admin)
+}
+
 // Create stores a new user in the database
 func (ur UserRepo) Create(ctx context.Context, username, password string, admin bool) error {
 	bcryptCost := 10
