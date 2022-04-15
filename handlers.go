@@ -63,11 +63,12 @@ func (e Env) Login(w http.ResponseWriter, r *http.Request) {
 		}
 
 		jwtCookie := &http.Cookie{
-			Name:     "anthen_auth",
+			Name:     "andthen_auth",
 			Value:    tok.String(),
 			Expires:  time.Now().Add(15 * time.Minute),
 			HttpOnly: true,
 			SameSite: http.SameSiteStrictMode,
+			Path:     "/",
 		}
 		refCookie := &http.Cookie{
 			Name:     "andthen_refresh",
@@ -75,12 +76,14 @@ func (e Env) Login(w http.ResponseWriter, r *http.Request) {
 			Expires:  time.Now().Add(4 * time.Hour),
 			HttpOnly: true,
 			SameSite: http.SameSiteStrictMode,
+			Path:     "/",
 		}
 		userCookie := &http.Cookie{
 			Name:     "andthen_user",
 			Value:    user.ToSafeJSONString(),
 			HttpOnly: false,
 			SameSite: http.SameSiteStrictMode,
+			Path:     "/",
 		}
 
 		http.SetCookie(w, jwtCookie)
@@ -167,11 +170,12 @@ func (e Env) Refresh(w http.ResponseWriter, r *http.Request) {
 	}
 
 	newJwtCookie := &http.Cookie{
-		Name:     "anthen_auth",
+		Name:     "andthen_auth",
 		Value:    newAccess.String(),
 		HttpOnly: true,
 		Expires:  time.Now().Add(15 * time.Minute),
 		SameSite: http.SameSiteStrictMode,
+		Path:     "/",
 	}
 	newRefCookie := &http.Cookie{
 		Name:     "andthen_refresh",
@@ -179,6 +183,7 @@ func (e Env) Refresh(w http.ResponseWriter, r *http.Request) {
 		HttpOnly: true,
 		Expires:  time.Now().Add(4 * time.Hour),
 		SameSite: http.SameSiteStrictMode,
+		Path:     "/",
 	}
 
 	http.SetCookie(w, newRefCookie)
